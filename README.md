@@ -15,6 +15,7 @@ This folder contains SSPro analysis scripts for comparing Shasta SSPro / hammerh
 | `SSPro_pipeline_nocx.py` | Variant of the main pipeline for Shasta-only or no-CX comparisons. Useful when there is no CX1018 comparator dataset. |
 | `SSPro_func.py` | Shared utility functions for SSPro specs, data cleanup, plots, heatmaps, barcharts, and instrument/RH log parsing. |
 | `SSPro_report_func.py` | Shared report plotting functions used by `SSPro_pipeline_report.py` to save images and generate report-ready plot outputs. |
+| `Seurat_CellTypeAnnotation_0726.Rmd` | R Markdown workflow for Seurat-based single-cell gene matrix analysis, QC, clustering, dimensionality reduction, feature plots, SingleR/celldex cell type annotation, ridge plots, and marker heatmaps. |
 
 Compiled files such as `*.pyc` may exist in `__pycache__`. They are generated automatically by Python and do not need to be run directly.
 
@@ -60,6 +61,7 @@ WellList*.txt or files containing "WellList" in the name
 demux_counts_all.csv       # required by SSPro_pipeline_report.py
 instrument log files       # only for log parsing sections
 DewPointLog-*.tsv          # only for RH/dewpoint parsing sections
+analysis_genematrix.csv.zip # required by Seurat_CellTypeAnnotation_0726.Rmd by default
 ```
 
 The exact folder layout is controlled by variables such as `folder`, `folder1`, `path0`, `path1`, `path2`, and `path3` near the top of each pipeline script.
@@ -477,6 +479,132 @@ reportfunc.gen_heatmap(
 
 ---
 
+
+## 6. `Seurat_CellTypeAnnotation_0726.Rmd`
+
+### Purpose
+
+`Seurat_CellTypeAnnotation_0726.Rmd` is an R Markdown report for single-cell gene matrix analysis using Seurat. It loads a gene-count matrix from a zipped CSV file, creates a Seurat object, performs QC visualization, normalization with `SCTransform`, PCA, clustering, UMAP/tSNE, target-gene feature plots, optional SingleR/celldex cell type annotation, ridge plots, and marker heatmaps.
+
+### Default report output
+
+The YAML header is configured to render both HTML and PDF outputs:
+
+```yaml
+output:
+  html_document: default
+  pdf_document: default
+```
+
+### Key parameters to edit
+
+The workflow is parameterized in the YAML header. For a new dataset, update these fields first:
+
+```yaml
+params:
+  stop.point: none
+  input.zip: "C:/Users/leongs/OneDrive - Takara Bio USA, Inc/0. Projects/Shasta instrument/Hammerhead syringe/SSPro double hammerhead/SSPro 20nL stacked validation hammerhead_noDownsampling/analysis_genematrix.csv.zip"
+  input.file: analysis_genematrix.csv
+  project.name: SSPro
+  use.dims.max: 30
+  cluster.resolution: 0.5
+  target.genes:
+    - ENSG00000172116
+    - ENSG00000153563
+    - ENSG00000010610
+    - ENSG00000177455
+    - ENSG00000081237
+  blend.genes:
+    - ENSG00000010610
+    - ENSG00000153563
+  min.cells: 3
+  min.features: 200
+  var.nfeatures: 3000
+  cell.annot.enabled: true
+  cell.annot.reduction: umap
+  debug: false
+```
+
+### Required input
+
+By default, the report reads a zipped CSV gene matrix:
+
+```r
+matrix <- read.csv(unz(params$input.zip, params$input.file), header = TRUE, row.names = 1)
+```
+
+Expected input structure:
+
+- `params$input.zip` points to a `.zip` archive.
+- `params$input.file` is the CSV inside the zip archive.
+- Genes/features are row names.
+- Cells/barcodes are columns.
+- The matrix values are counts used to create a Seurat object.
+
+### Main analysis sections
+
+| Section | What it does |
+|---|---|
+| YAML parameters | Defines input matrix path, project name, filtering thresholds, variable-feature count, selected genes, clustering settings, and whether cell annotation is enabled. |
+| `setup` | Loads `Seurat`, `dplyr`, `sctransform`, and, if enabled, `SingleR`, `celldex`, and `SingleCellExperiment`. |
+| `load_matrix` | Reads the zipped gene matrix, creates the Seurat object, and calculates mitochondrial percentage using `PercentageFeatureSet`. |
+| Summary | Prints the number of input cells and remaining cells. |
+| QC metrics | Generates violin plots for `nFeature_RNA`, `nCount_RNA`, and `percent.mt`. |
+| Metadata relationships | Plots `nCount_RNA` vs `percent.mt` and `nCount_RNA` vs `nFeature_RNA`. |
+| `SCTransform` | Normalizes/scales the data and identifies variable genes while regressing out `percent.mt`. |
+| Variable genes | Prints the top 50 variable genes. |
+| PCA | Runs PCA and displays a dimensional heatmap over the selected PCs. |
+| Elbow plot | Generates an elbow plot across 40 dimensions to help choose PCs. |
+| Clustering | Runs `FindNeighbors` and `FindClusters` using `params$use.dims.max` and `params$cluster.resolution`. |
+| UMAP/tSNE | Runs UMAP and tSNE using the same PC range as clustering. |
+| Feature plots | Plots target genes and blended gene pairs on the embedding. |
+| Cell type annotation | Converts the Seurat object to `SingleCellExperiment`, trims gene names to Ensembl IDs, loads `BlueprintEncodeData`, runs `SingleR`, and adds main/fine cell type labels. |
+| Ridge plot | Generates ridge plots of target genes grouped by fine cell type labels. |
+| Marker heatmaps | Runs `FindAllMarkers`, selects top markers, and renders cluster and fine-cell-type marker heatmaps. |
+
+### Usage example: render from RStudio
+
+1. Open `Seurat_CellTypeAnnotation_0726.Rmd` in RStudio.
+2. Edit `params$input.zip`, `params$input.file`, `project.name`, `target.genes`, and `blend.genes` in the YAML header.
+3. Select **Knit** to generate the HTML report.
+
+### Usage example: render from command line
+
+```bash
+cd "C:/Users/leongs/OneDrive - Takara Bio USA, Inc/2. Scripts/SSPro_Script"
+Rscript -e "rmarkdown::render('Seurat_CellTypeAnnotation_0726.Rmd', output_format='html_document')"
+```
+
+### Usage example: override parameters from command line
+
+```bash
+Rscript -e "rmarkdown::render('Seurat_CellTypeAnnotation_0726.Rmd', params=list(input.zip='C:/path/to/analysis_genematrix.csv.zip', input.file='analysis_genematrix.csv', project.name='SSPro_new_run', cell.annot.enabled=TRUE))"
+```
+
+### Usage example: stop after the elbow plot
+
+The report has a `stop.point` parameter. Set this to `elbow` to stop after the elbow plot and inspect how many dimensions to use before running clustering and downstream annotation.
+
+```yaml
+params:
+  stop.point: elbow
+```
+
+or from command line:
+
+```bash
+Rscript -e "rmarkdown::render('Seurat_CellTypeAnnotation_0726.Rmd', params=list(stop.point='elbow'))"
+```
+
+### Notes and cautions
+
+- `cell.annot.enabled: true` requires `SingleR`, `celldex`, and `SingleCellExperiment`.
+- The annotation uses `BlueprintEncodeData(ensembl = TRUE)`, so the workflow strips feature names at the `-` delimiter to keep the Ensembl ID portion before running SingleR.
+- `use.dims.max` controls the maximum PC dimensions used for `FindNeighbors`, UMAP, and tSNE.
+- `cluster.resolution` controls the granularity of Seurat clustering. Higher values generally produce more clusters.
+- `debug: false` suppresses code echo in the knitted output through `knitr::opts_chunk$set(echo = params$debug)`.
+- The mitochondrial percentage pattern is set to `"-MT-"`; confirm this matches the gene naming convention in your matrix.
+
 ## Common run examples
 
 ### Example A: Full Shasta vs CX validation analysis
@@ -517,6 +645,18 @@ Command:
 ```bash
 cd "C:/Users/leongs/OneDrive - Takara Bio USA, Inc/2. Scripts/SSPro_Script"
 python SSPro_pipeline_nocx.py
+```
+
+
+### Example D: Seurat cell type annotation report
+
+Use `Seurat_CellTypeAnnotation_0726.Rmd` when you want an HTML/PDF single-cell analysis report from an `analysis_genematrix.csv` file.
+
+Command:
+
+```bash
+cd "C:/Users/leongs/OneDrive - Takara Bio USA, Inc/2. Scripts/SSPro_Script"
+Rscript -e "rmarkdown::render('Seurat_CellTypeAnnotation_0726.Rmd', output_format='html_document')"
 ```
 
 ---
@@ -564,6 +704,27 @@ No_of_Genes
 %Mitochondrial
 ```
 
+
+### R Markdown render fails because a package is missing
+
+Install the required R packages before rendering:
+
+```r
+install.packages(c("Seurat", "dplyr", "sctransform", "knitr", "rmarkdown"))
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+  install.packages("BiocManager")
+}
+BiocManager::install(c("SingleR", "celldex", "SingleCellExperiment"))
+```
+
+### R Markdown cannot find `analysis_genematrix.csv`
+
+Confirm that `params$input.zip` points to a valid zip file and `params$input.file` matches the exact CSV filename inside that zip.
+
+### Cell annotation fails or gives unexpected labels
+
+Confirm that the feature names can be converted to Ensembl IDs. The current workflow splits feature names at `-` and uses the first part as the Ensembl ID before calling `SingleR` with `BlueprintEncodeData(ensembl = TRUE)`.
+
 ### Report images are missing
 
 For `SSPro_pipeline_report.py`, confirm:
@@ -608,3 +769,23 @@ Optional:
 ```text
 dataframe_image
 ```
+
+
+### R packages for `Seurat_CellTypeAnnotation_0726.Rmd`
+
+The R Markdown workflow uses the following R packages:
+
+```r
+install.packages(c("Seurat", "dplyr", "sctransform", "knitr"))
+```
+
+For cell type annotation, install Bioconductor packages:
+
+```r
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+  install.packages("BiocManager")
+}
+BiocManager::install(c("SingleR", "celldex", "SingleCellExperiment"))
+```
+
+The cell annotation libraries are only required when `params$cell.annot.enabled` is set to `true`.
