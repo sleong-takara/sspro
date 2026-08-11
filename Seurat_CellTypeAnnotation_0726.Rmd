@@ -1,0 +1,289 @@
+---
+title: "Seurat Analysis Report"
+author: "Bioinformatics group, Takara Bio USA, Inc."
+date: "11/29/2021"
+output:
+  html_document: default
+  pdf_document: default
+params:
+  stop.point: none
+  input.zip: "C:/Users/leongs/OneDrive - Takara Bio USA, Inc/0. Projects/Shasta instrument/Hammerhead syringe/SSPro double hammerhead/SSPro 20nL stacked validation hammerhead_noDownsampling/analysis_genematrix.csv.zip"
+  #input.file: analyze_incl_introns_genematrix.csv
+  input.file: analysis_genematrix.csv
+  project.name: SSPro
+  use.dims.max: 30
+  cluster.resolution: 0.5
+  target.genes:
+  - ENSG00000172116
+  - ENSG00000153563
+  - ENSG00000010610
+  - ENSG00000177455
+  - ENSG00000081237
+  blend.genes:
+  - ENSG00000010610
+  - ENSG00000153563
+  min.cells: 3
+  min.features: 200
+  var.nfeatures: 3000
+  cell.annot.enabled: true
+  cell.annot.reduction: umap
+  debug: false
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = params$debug)
+
+# Required library
+library(Seurat)
+# options(Seurat.object.assay.version = "v5")
+library(dplyr)
+library(sctransform)
+
+if (params$cell.annot.enabled == TRUE) {
+  library(SingleR)
+  library(celldex)
+  library(SingleCellExperiment)
+}
+
+```
+
+
+```{r load_matrix, include=FALSE}
+# Load matrix
+
+matrix <- read.csv(unz(params$input.zip, params$input.file), header = TRUE, row.names = 1)
+# matrix <- read.csv("Z:/Xuan-Z/Shasta/Alpha1_0726/Alpha1_SSPro_0726/analysis_genematrix/analysis_genematrix.csv", header = TRUE, row.names = 1)
+#matrix <- read.csv("C:/Users/leongs/OneDrive - Takara Bio USA, Inc/0. Projects/SCI automation/Research Phase/250326_VH01562_101_AAGMCTCM5_PBMC_DL_2lots/analyze_incl_introns_genematrix.csv", header = TRUE, row.names = 1)
+
+# Create Seurat object
+seurat.obj <- CreateSeuratObject(
+	counts = matrix, project = params$project.name,
+	min.cells = params$min.cells, min.features = params$min.features
+	)
+
+# Calculate percentage of mitochondrial reads
+seurat.obj[["percent.mt"]] <- PercentageFeatureSet(seurat.obj, pattern = "-MT-")
+```
+
+
+
+<style type="text/css">
+.main-container {max-width: 1200px;}
+</style>
+
+## Summary
+
+```{r summary}
+print(paste0("Number of input cells: ", length(matrix)))
+print(paste0("Number of remained cells: ", length(seurat.obj$orig.ident)))
+```
+## QC Metrics
+
+```{r qc_metrics}
+VlnPlot(seurat.obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+
+## Relationships of Metadata
+
+```{r rel_meta, fig.width=15}
+plot1 <- FeatureScatter(seurat.obj, feature1 = "nCount_RNA", feature2 = "percent.mt") + NoLegend()
+plot2 <- FeatureScatter(seurat.obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA") + NoLegend()
+plot1 + plot2
+```
+
+<!-- Do SCTransform--> 
+```{r sc_transform, include=FALSE}
+#Note that this single command replaces NormalizeData(), ScaleData(), and FindVariableFeatures()
+seurat.obj <- SCTransform(
+  seurat.obj,
+  method = "glmGamPoi",
+  vars.to.regress = "percent.mt",
+  verbose = TRUE,
+  variable.features.n = params$var.nfeatures
+  )
+```
+
+## Variable Genes
+
+```{r top50_var}
+# Identify the 50 most highly variable genes
+top50 <- head(VariableFeatures(seurat.obj), 50)
+print(top50)
+```
+
+```{r}
+# # plot variable features with and without labels
+# plot1 <- VariableFeaturePlot(seurat.obj)
+# plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+# plot1 + plot2
+```
+
+## PCA
+
+```{r pca, include=FALSE}
+seurat.obj <- RunPCA(seurat.obj, features = VariableFeatures(object = seurat.obj))
+```
+
+```{r}
+# print(seurat.obj[["pca"]], dims = 1:10, nfeatures = 5)
+```
+
+```{r plot_pca, fig.height = 13, fig.width = 10}
+# VizDimLoadings(seurat.obj, dims = 1:2, reduction = "pca")
+# DimPlot(seurat.obj, reduction = "pca")
+DimHeatmap(seurat.obj, dims = 1:30, cells = 500, balanced = TRUE)
+```
+
+## Elbow Plot
+
+```{r elbow, fig.width = 15}
+ElbowPlot(seurat.obj, ndims = 40) #Elbow plot’: a ranking of principle components based on the percentage of variance explained by each one
+```
+
+<!-- Check stopping point -->
+```{r, include=FALSE}
+if (params$stop.point == "elbow") {
+  knitr::knit_exit()
+}
+```
+
+## Clustering
+
+```{r clustering}
+seurat.obj <- FindNeighbors(seurat.obj, dims = 1:params$use.dims.max)
+seurat.obj <- FindClusters(seurat.obj, resolution = params$cluster.resolution) #Increased values leading to a greater number of clusters. We find that setting this parameter between 0.4-1.2 typically returns good results for single-cell datasets of around 3K cells
+```
+
+## UMAP and tSNE
+
+```{r umap_tsne, include=FALSE}
+seurat.obj <- RunUMAP(seurat.obj, dims = 1:params$use.dims.max)  # UMAP use the same PCs as input to the clustering analysis
+seurat.obj <- RunTSNE(seurat.obj, dims = 1:params$use.dims.max)  # tSNE use the same PCs as input to the clustering analysis
+```
+
+```{r plot_umap_tsne}
+DimPlot(seurat.obj, reduction = "umap", label = TRUE)
+DimPlot(seurat.obj, reduction = "tsne", label = TRUE)
+```
+
+## Feature Plot
+
+```{r feature_plot, fig.width=12, fig.height=7}
+FeaturePlot(
+  seurat.obj,
+  features = params$target.genes,
+  ncol = 3
+)
+```
+
+## Feature Plot (blended)
+
+```{r make_blend_feature_plot, fig.width=15, fig.height=4, include=FALSE}
+blend.plots <- FeaturePlot(
+  seurat.obj,
+  features = params$blend.genes,
+  # features = c("ENSG00000081237-PTPRC", "ENSG00000111640-GAPDH"),
+  blend = TRUE,
+  combine = FALSE, 
+  pt.size = 2, 
+  blend.threshold = 0.2
+)
+```
+
+```{r blend_feature_plot_genes, fig.width=10, fig.height=5}
+blend.plots[[1]] + NoLegend() + blend.plots[[2]] + NoLegend()
+```
+
+```{r blend_feature_plot_mixed, fig.width=10, fig.height=5}
+blend.plots[[3]] + NoLegend() + blend.plots[[4]] 
+```
+
+## Cell Type Annotation
+
+```{r cell_type_annot, include=FALSE}
+if (params$cell.annot.enabled == TRUE) {
+  # Convert to SingleCellExperiment
+  seurat.sce <- as.SingleCellExperiment(seurat.obj)
+
+  # Extract Ensembl ID
+  names <- rownames(seurat.sce)
+  names.split <- strsplit(names, "-")
+  ens.ids <- c()
+  for (v in names.split){
+    ens.ids <- c(ens.ids, v[[1]])
+  }
+  rownames(seurat.sce) <- ens.ids
+
+  # Load reference data
+  ref.data <- BlueprintEncodeData(ensembl = TRUE)
+
+  # Do annotation
+  pred.main <- SingleR(test=seurat.sce, ref=ref.data, assay.type.test=1, labels = ref.data$label.main)
+  pred.fine <- SingleR(test=seurat.sce, ref=ref.data, assay.type.test=1, labels = ref.data$label.fine)
+
+  # Add cell types to main object
+  seurat.obj$celltype.main <- pred.main$labels
+  seurat.obj$celltype.fine <- pred.fine$labels
+}
+```
+
+```{r plot_cell_type_main, fig.width=11, fig.height=7}
+if (params$cell.annot.enabled == TRUE) {
+  # Plot for main
+  Idents(seurat.obj) <- "celltype.main"
+  DimPlot(seurat.obj, reduction = params$cell.annot.reduction, label = TRUE, cols = c("grey", "red", "orange", "purple", "green", "blue", "gold", "cyan", "pink", "olivedrab", "cyan", "magenta", "violet", "turquoise", "darkgreen","yellow"), pt.size = 1.5)
+} else {
+  print("Cell type annotation was disabled.")
+}
+```
+
+```{r plot_cell_type_fine, fig.width=11, fig.height=7}
+if (params$cell.annot.enabled == TRUE) {
+  # Plot for fine
+  Idents(seurat.obj) <- "celltype.fine"
+  DimPlot(seurat.obj, reduction = params$cell.annot.reduction, label = TRUE, pt.size = 1.5)
+}
+```
+
+## Ridge Plot (Cell Type)
+
+```{r ridge_plot, fig.width=12, fig.height=18}
+if (params$cell.annot.enabled == TRUE) {
+  Idents(seurat.obj) <- "celltype.fine"
+  RidgePlot(seurat.obj, features = params$target.genes, ncol = 2)
+} else {
+  print("Cell type annotation was disabled.")
+}
+```
+
+## Marker Heatmap (Cluster)
+
+```{r marker_genes, include=FALSE}
+# Find all markers vs other clusters
+Idents(seurat.obj) <- "seurat_clusters"
+all.markers <- FindAllMarkers(seurat.obj, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+all.markers %>% group_by(cluster) %>% top_n(n = 5, wt = avg_log2FC) -> top5
+```
+
+```{r marker_heatmap, fig.width=12, fig.height=10}
+DoHeatmap(seurat.obj, features = top5$gene) + NoLegend()
+```
+
+## Marker Heatmap (Fine Cell Types)
+
+```{r marker_genes_fine, include=FALSE}
+if (params$cell.annot.enabled == TRUE) {
+  # Find all markers vs other cell types
+  Idents(seurat.obj) <- "celltype.fine"
+  all.markers <- FindAllMarkers(seurat.obj, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+  all.markers %>% group_by(cluster) %>% top_n(n = 5, wt = avg_log2FC) -> top5
+}
+```
+
+```{r marker_heatmap_fine, fig.width=18, fig.height=12}
+if (params$cell.annot.enabled == TRUE) {
+  DoHeatmap(seurat.obj, features = top5$gene) + NoLegend()
+} else {
+  print("Cell type annotation was disabled.")
+}
+```
