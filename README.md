@@ -212,13 +212,13 @@ notes = "Downsampled to 50k"
 gene_sensitivity = 0.8
 ```
 
-Also update pass/fail metadata values manually if needed:
+Also update values manually:
 
 ```python
-cx_total_cells = 1
-cx_pass = 1
-shasta_total_cells = 1
-shasta_pass = 1
+cx_total_cells = 1500
+cx_pass = 1000
+shasta_total_cells = 1500
+shasta_pass = 1000
 ```
 
 ### Usage example: generate an HTML validation report
